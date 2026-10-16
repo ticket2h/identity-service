@@ -1,0 +1,6 @@
+ticket2h:
+  # jwt.private-key: sinh ngẫu nhiên lúc chạy test (TestKeys), không commit khoá nào
+  internal-api:
+    clients:
+      core-service: test-internal-key-core-0123456789abcdef
+      notification-service: test-internal-key-notification-0123456789
