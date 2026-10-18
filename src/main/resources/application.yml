@@ -20,6 +20,10 @@ spring:
 server:
   port: 8082
 
+springdoc:
+  # Mặc định springdoc ghi "*/*" cho mọi response; ghi rõ JSON để kiểu TypeScript sinh ra (web) gọn hơn
+  default-produces-media-type: application/json
+
 management:
   endpoints:
     web:
@@ -32,6 +36,11 @@ ticket2h:
     ttl: PT1H
     key-id: k1                          # "kid" trong header JWT, khớp với khoá trong /.well-known/jwks.json
     private-key: ${JWT_PRIVATE_KEY}     # RSA 2048, PKCS#8 DER, base64 một dòng
+  refresh-token:
+    # Refresh token sống trong cookie httpOnly, xoay vòng mỗi lần dùng (POST /auth/refresh). Xem README, mục "Refresh token"
+    ttl: P14D
+    cookie-path: /auth      # gateway (nginx của web) đổi thành /api/identity/auth bằng proxy_cookie_path
+    cookie-secure: true     # trình duyệt vẫn nhận cookie Secure trên http://localhost
   internal-api:
     # Service nào được gọi /internal/** và bằng khoá nào (header X-Internal-Api-Key). Xem infra/docs/contracts.md
     clients:

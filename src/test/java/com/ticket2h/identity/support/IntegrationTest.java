@@ -46,7 +46,7 @@ public abstract class IntegrationTest {
 
     @BeforeEach
     void resetState() {
-        jdbc.execute("TRUNCATE users, organizers");
+        jdbc.execute("TRUNCATE refresh_tokens, users, organizers");
         clock.set(START);
         api = new Api(port, json);
     }

@@ -43,8 +43,9 @@ import tools.jackson.databind.json.JsonMapper;
 public class SecurityConfig {
 
     /** Đường dẫn không cần JWT. JWKS phải công khai: service khác cần nó để kiểm tra token. */
-    private static final String[] PUBLIC_POST = {"/auth/register", "/auth/login"};
-    private static final String[] PUBLIC_GET = {"/.well-known/jwks.json", "/actuator/health"};
+    private static final String[] PUBLIC_POST = {"/auth/register", "/auth/login", "/auth/refresh", "/auth/logout"};
+    private static final String[] PUBLIC_GET = {"/.well-known/jwks.json", "/actuator/health",
+            "/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**"};
 
     /**
      * API cho service khác trong hệ thống (core-service, notification-service), không dành cho người dùng: xác thực
@@ -71,7 +72,8 @@ public class SecurityConfig {
     @Order(2)
     SecurityFilterChain securityFilterChain(HttpSecurity http, JsonMapper json) throws Exception {
         http
-                .csrf(csrf -> csrf.disable())                 // API stateless, không dùng cookie
+                // API stateless. Cookie refresh token có SameSite=Strict nên trang khác không gửi kèm được
+                .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/error").permitAll()

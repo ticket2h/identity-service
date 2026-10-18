@@ -15,7 +15,8 @@ import org.springframework.validation.annotation.Validated;
 /** Toàn bộ cấu hình {@code ticket2h.*} trong application.yml. */
 @Validated
 @ConfigurationProperties("ticket2h")
-public record IdentityProperties(@Valid @NotNull Jwt jwt, @Valid @NotNull InternalApi internalApi) {
+public record IdentityProperties(@Valid @NotNull Jwt jwt, @Valid @NotNull RefreshToken refreshToken,
+        @Valid @NotNull InternalApi internalApi) {
 
     /**
      * {@code privateKey}: khoá riêng RSA (PKCS#8 DER, base64) để ký JWT. Khoá công khai tính ra từ khoá riêng và
@@ -26,6 +27,15 @@ public record IdentityProperties(@Valid @NotNull Jwt jwt, @Valid @NotNull Intern
             @NotNull Duration ttl,
             @NotBlank String keyId,
             @NotBlank String privateKey) {}
+
+    /**
+     * Refresh token trong cookie httpOnly. {@code cookiePath} là đường dẫn trình duyệt thấy: gọi thẳng service thì
+     * {@code /auth}, qua gateway thì gateway tự đổi.
+     */
+    public record RefreshToken(
+            @NotNull Duration ttl,
+            @NotBlank String cookiePath,
+            boolean cookieSecure) {}
 
     /** Khoá của từng service được gọi {@code /internal/**}: tên service → khoá (tối thiểu 32 ký tự). */
     public record InternalApi(

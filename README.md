@@ -15,9 +15,12 @@ API nội bộ): [infra/docs/contracts.md](https://github.com/ticket2h/infra/blo
 |---|---|---|---|
 | POST | `/auth/register` | Mọi người | `{email, password, fullName}` → 201 tài khoản CUSTOMER. Email lưu chữ thường; trùng → 409 `EMAIL_ALREADY_REGISTERED` |
 | POST | `/auth/login` | Mọi người | `{email, password}` → `{accessToken, tokenType: "Bearer", expiresIn, user}`. Sai email hay sai mật khẩu đều 401 `INVALID_CREDENTIALS`, cùng thông báo |
+| POST | `/auth/refresh` | Trình duyệt (cookie) | Đổi refresh token trong cookie `ticket2h_refresh` lấy body giống `/auth/login` và cookie mới. Token sai, hết hạn, đã thu hồi → 401 `UNAUTHENTICATED` và xoá cookie |
+| POST | `/auth/logout` | Trình duyệt (cookie) | Thu hồi refresh token (cả family), xoá cookie → 204 |
 | GET | `/me` | Đã đăng nhập | Tài khoản của người gọi |
 | POST | `/admin/organizers` | ADMIN | `{name}` → 201 `{id, name}` |
 | POST | `/admin/users` | ADMIN | `{email, password, fullName, role, organizerId?}`; ORGANIZER cần `organizerId` có thật, vai trò khác không được có |
+| GET | `/v3/api-docs`, `/swagger-ui.html` | Mọi người | Mô tả API (OpenAPI 3, springdoc). Web sinh kiểu TypeScript từ đây |
 | GET | `/.well-known/jwks.json` | Mọi người (service khác) | Khoá công khai (JWKS), `Cache-Control: public, max-age=300` |
 | GET | `/internal/users/{userId}` | core-service, notification-service | Header `X-Internal-Api-Key`. Không có → 404 |
 | POST | `/internal/users/lookup` | core-service | `{email}` (chuẩn hoá hoa thường, khoảng trắng). Không có → 404; email sai dạng → 400 |
@@ -27,6 +30,28 @@ Tài khoản trả ra (công khai lẫn nội bộ) có đúng các trường `i
 không mở được `/internal/**`. Tìm theo email dùng POST để email không lọt vào URL hay access log.
 
 Lỗi trả theo RFC 9457 (ProblemDetail) kèm trường `code`, cùng bộ mã với core-service.
+
+## Refresh token
+
+`/auth/login` vẫn trả access token trong body như trước (curl, `demo.sh` không đổi), và đặt thêm cookie
+`ticket2h_refresh`: `HttpOnly; Secure; SameSite=Strict; Path=/auth`, sống `ticket2h.refresh-token.ttl` (mặc định 14 ngày).
+Web giữ access token trong bộ nhớ, hết hạn thì gọi `/auth/refresh`.
+
+- Bảng `refresh_tokens` chỉ lưu SHA-256 của token. Khoá dòng (`FOR UPDATE`) khi đổi, nên hai request dùng cùng token
+  chạy lần lượt.
+- **Xoay vòng**: mỗi lần `/auth/refresh`, token cũ bị thu hồi, token mới cùng `family_id`. Token đã thu hồi mà còn bị
+  gửi lại nghĩa là có người giữ bản sao: thu hồi cả family (mọi thiết bị khác không bị ảnh hưởng vì mỗi lần đăng nhập là
+  một family riêng). Vì vậy web phải gọi refresh **tuần tự giữa các tab** (Web Locks API).
+- Gọi qua gateway (nginx của repo web), cookie đi ở `/api/identity/auth`: gateway đổi `Path` bằng `proxy_cookie_path`,
+  service không cần biết. Gọi thẳng cổng 8082 thì giữ `/auth`.
+- `SameSite=Strict` chặn trang khác gửi kèm cookie, nên CSRF vẫn tắt.
+- Chưa có job dọn token hết hạn (bảng chỉ lớn dần theo số lần đăng nhập/refresh): làm cùng rate limit ở M5.
+
+| Cấu hình | Mặc định | Ý nghĩa |
+|---|---|---|
+| `ticket2h.refresh-token.ttl` | `P14D` | Thời hạn mỗi refresh token (tính lại sau mỗi lần xoay) |
+| `ticket2h.refresh-token.cookie-path` | `/auth` | `Path` của cookie |
+| `ticket2h.refresh-token.cookie-secure` | `true` | Thuộc tính `Secure`; trình duyệt vẫn nhận trên `http://localhost` |
 
 ## JWT
 
@@ -57,6 +82,7 @@ src/main/java/com/ticket2h/identity/
 ├── exception/    ErrorCode, BusinessException..., ProblemDetails, ApiExceptionHandler
 └── dev/          DevAccounts (id cố định), DevDataSeeder (profile dev)
 src/main/resources/db/migration/V1__identity.sql   organizers, users
+src/main/resources/db/migration/V2__refresh_tokens.sql   refresh_tokens
 ```
 
 ## Chạy
@@ -101,13 +127,14 @@ Id cố định, vì core-service tạo sự kiện mẫu cho đúng ban tổ ch
 ## Test
 
 ```bash
-./mvnw verify      # 4 unit test + 23 integration test
+./mvnw verify      # 4 unit test + 31 integration test
 ```
 
 Test chạy PostgreSQL thật (Testcontainers, cần Docker). Khoá RSA sinh lúc chạy test, không commit khoá nào.
 
 | Test | Kiểm tra |
 |---|---|
+| `RefreshTokenApiIT` | Cookie httpOnly/Strict; xoay vòng; dùng lại token cũ thu hồi cả family nhưng không đụng lần đăng nhập khác; hết hạn, thiếu cookie 401; đăng xuất; `/v3/api-docs` công khai |
 | `AuthApiIT` | Đăng ký → đăng nhập → `/me`; cùng 401 cho sai mật khẩu và email lạ; trùng email 409; token thiếu/hết hạn 401; token cũ không chặn đăng nhập; chỉ ADMIN tạo được STAFF |
 | `JwtAndJwksIT` | Token RS256 có `kid`; claim; ORGANIZER có `organizerId`; token kiểm tra được chỉ bằng JWKS (như core-service); JWKS không lộ khoá riêng; token ký bằng khoá khác (cùng `kid`) hay HS256 bị từ chối |
 | `InternalUserApiIT` | Thiếu/sai khoá 401; JWT ADMIN không mở được; cả hai khoá client dùng được; đúng tập trường; tìm theo email chuẩn hoá; 404, 400 |
