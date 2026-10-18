@@ -21,7 +21,7 @@ server:
   port: 8082
 
 springdoc:
-  # Mặc định springdoc ghi "*/*" cho mọi response; ghi rõ JSON để kiểu TypeScript sinh ra (web) gọn hơn
+  # Mặc định springdoc ghi "*/*" cho mọi response; ghi rõ JSON để kiểu TypeScript sinh ra (web-app) gọn hơn
   default-produces-media-type: application/json
 
 management:
@@ -39,7 +39,7 @@ ticket2h:
   refresh-token:
     # Refresh token sống trong cookie httpOnly, xoay vòng mỗi lần dùng (POST /auth/refresh). Xem README, mục "Refresh token"
     ttl: P14D
-    cookie-path: /auth      # gateway (nginx của web) đổi thành /api/identity/auth bằng proxy_cookie_path
+    cookie-path: /auth      # gateway (nginx của web-app) đổi thành /api/identity/auth bằng proxy_cookie_path
     cookie-secure: true     # trình duyệt vẫn nhận cookie Secure trên http://localhost
   internal-api:
     # Service nào được gọi /internal/** và bằng khoá nào (header X-Internal-Api-Key). Xem infra/docs/contracts.md

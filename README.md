@@ -42,7 +42,7 @@ Web giữ access token trong bộ nhớ, hết hạn thì gọi `/auth/refresh`.
 - **Xoay vòng**: mỗi lần `/auth/refresh`, token cũ bị thu hồi, token mới cùng `family_id`. Token đã thu hồi mà còn bị
   gửi lại nghĩa là có người giữ bản sao: thu hồi cả family (mọi thiết bị khác không bị ảnh hưởng vì mỗi lần đăng nhập là
   một family riêng). Vì vậy web phải gọi refresh **tuần tự giữa các tab** (Web Locks API).
-- Gọi qua gateway (nginx của repo web), cookie đi ở `/api/identity/auth`: gateway đổi `Path` bằng `proxy_cookie_path`,
+- Gọi qua gateway (nginx của repo web-app), cookie đi ở `/api/identity/auth`: gateway đổi `Path` bằng `proxy_cookie_path`,
   service không cần biết. Gọi thẳng cổng 8082 thì giữ `/auth`.
 - `SameSite=Strict` chặn trang khác gửi kèm cookie, nên CSRF vẫn tắt.
 - Chưa có job dọn token hết hạn (bảng chỉ lớn dần theo số lần đăng nhập/refresh): làm cùng rate limit ở M5.
