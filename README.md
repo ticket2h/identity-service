@@ -19,10 +19,12 @@ API nội bộ): [infra/docs/contracts.md](https://github.com/ticket2h/infra/blo
 | POST | `/auth/logout` | Trình duyệt (cookie) | Thu hồi refresh token (cả family), xoá cookie → 204 |
 | GET | `/me` | Đã đăng nhập | Tài khoản của người gọi |
 | POST | `/admin/organizers` | ADMIN | `{name}` → 201 `{id, name}` |
+| GET | `/admin/organizers` | ADMIN | Mảng `[{id, name}]`, theo tên không phân biệt hoa thường. Không phân trang |
 | POST | `/admin/users` | ADMIN | `{email, password, fullName, role, organizerId?}`; ORGANIZER cần `organizerId` có thật, vai trò khác không được có |
+| GET | `/admin/users?role=&q=&page=&size=` | ADMIN | `{items: [tài khoản], page, size, total}`, mới tạo trước (cùng lúc thì theo email). Chi tiết bên dưới |
 | GET | `/v3/api-docs`, `/swagger-ui.html` | Mọi người | Mô tả API (OpenAPI 3, springdoc). Web sinh kiểu TypeScript từ đây |
 | GET | `/.well-known/jwks.json` | Mọi người (service khác) | Khoá công khai (JWKS), `Cache-Control: public, max-age=300` |
-| GET | `/internal/users/{userId}` | core-service, notification-service | Header `X-Internal-Api-Key`. Không có → 404 |
+| GET | `/internal/users/{userId}` | core-service, notification-service | Header `X-Internal-Api-Key`. Không có → 404. notification-service: email, tên người nhận; core-service: hiện nhân viên được phân công cho sự kiện |
 | POST | `/internal/users/lookup` | core-service | `{email}` (chuẩn hoá hoa thường, khoảng trắng). Không có → 404; email sai dạng → 400 |
 
 Tài khoản trả ra (công khai lẫn nội bộ) có đúng các trường `id, email, fullName, role, organizerId`
@@ -30,6 +32,29 @@ Tài khoản trả ra (công khai lẫn nội bộ) có đúng các trường `i
 không mở được `/internal/**`. Tìm theo email dùng POST để email không lọt vào URL hay access log.
 
 Lỗi trả theo RFC 9457 (ProblemDetail) kèm trường `code`, cùng bộ mã với core-service.
+
+Người không phải ADMIN gọi `/admin/**` → 403 `FORBIDDEN`; không có token → 401 `UNAUTHENTICATED`.
+
+### `GET /admin/users`
+
+Màn hình quản trị của web-app. Cùng dạng trang với `GET /events` của core-service (`page` đếm từ 0):
+
+```json
+{ "items": [ { "id": "uuid", "email": "staff1@test.local", "fullName": "Nhân viên 1",
+               "role": "STAFF", "organizerId": null } ],
+  "page": 0, "size": 20, "total": 1 }
+```
+
+| Tham số | Mặc định | Ý nghĩa |
+|---|---|---|
+| `role` | (mọi vai trò) | `CUSTOMER`, `ORGANIZER`, `STAFF`, `ADMIN`, viết hoa đúng như vậy. Giá trị khác → 400 `VALIDATION_FAILED`; `role=` rỗng coi như không lọc |
+| `q` | (không lọc) | Bỏ khoảng trắng hai đầu, tìm chuỗi con trong email **hoặc** họ tên, không phân biệt hoa thường (cả chữ có dấu). `%`, `_` là ký tự thường |
+| `page` | `0` | Ngoài `0..10000` → 400 `VALIDATION_FAILED` |
+| `size` | `20` | Nhỏ hơn 1 → 400; lớn hơn 100 thì dùng 100 (như core giới hạn `size` của `/events`). `size` trong kết quả là số đã dùng |
+
+`total` là tổng số tài khoản khớp bộ lọc trên mọi trang. Lọc và phân trang làm trong database (`UserRepository.search`).
+`q` nằm trên URL nên có thể lọt vào access log của gateway: chấp nhận được vì chỉ ADMIN gọi và chỉ là đoạn tìm kiếm;
+tìm đúng một email (dữ liệu cá nhân) thì service khác vẫn dùng `POST /internal/users/lookup`.
 
 ## Refresh token
 
@@ -74,7 +99,7 @@ src/main/java/com/ticket2h/identity/
 ├── config/       IdentityProperties, JwtConfig (khoá RSA, JWKS, encoder/decoder), SecurityConfig, PasswordConfig, ClockConfig
 ├── controller/   AuthController, AdminController, InternalUserController, JwksController
 ├── dto/request/  RegisterRequest, LoginRequest, CreateUserRequest, CreateOrganizerRequest, UserLookupRequest
-├── dto/response/ UserResponse, LoginResponse, OrganizerResponse
+├── dto/response/ UserResponse, UserPageResponse, LoginResponse, OrganizerResponse
 ├── entity/       User, Organizer, Role, AssignedIdEntity
 ├── repository/   UserRepository, OrganizerRepository, Constraints
 ├── service/      AccountService (đăng ký, đăng nhập, tạo tài khoản), TokenService (phát JWT), Emails
@@ -127,7 +152,7 @@ Id cố định, vì core-service tạo sự kiện mẫu cho đúng ban tổ ch
 ## Test
 
 ```bash
-./mvnw verify      # 4 unit test + 31 integration test
+./mvnw verify      # 4 unit test + 40 integration test
 ```
 
 Test chạy PostgreSQL thật (Testcontainers, cần Docker). Khoá RSA sinh lúc chạy test, không commit khoá nào.
@@ -139,5 +164,6 @@ Test chạy PostgreSQL thật (Testcontainers, cần Docker). Khoá RSA sinh lú
 | `JwtAndJwksIT` | Token RS256 có `kid`; claim; ORGANIZER có `organizerId`; token kiểm tra được chỉ bằng JWKS (như core-service); JWKS không lộ khoá riêng; token ký bằng khoá khác (cùng `kid`) hay HS256 bị từ chối |
 | `InternalUserApiIT` | Thiếu/sai khoá 401; JWT ADMIN không mở được; cả hai khoá client dùng được; đúng tập trường; tìm theo email chuẩn hoá; 404, 400 |
 | `AdminApiIT` | Tạo ban tổ chức rồi tài khoản ORGANIZER; thiếu hoặc sai `organizerId` 400; vai trò khác không gắn ban tổ chức; người không phải ADMIN 403 |
+| `AdminListApiIT` | Danh sách ban tổ chức theo tên (không phân biệt hoa thường); tài khoản mới trước, đúng dạng trang, không lộ `passwordHash`; lọc `role`; `q` theo email hoặc tên có dấu, không phân biệt hoa thường; trang không trùng, `total` đúng; `size` > 100 thành 100; `role`/`page`/`size` sai 400; vai trò khác 403, chưa đăng nhập 401 |
 | `DevDataSeederIT` | Tài khoản mẫu có đúng id cố định |
 | `JwtConfigTest` | Khoá sai base64, không phải RSA, dưới 2048 bit bị từ chối với thông báo không chứa khoá |

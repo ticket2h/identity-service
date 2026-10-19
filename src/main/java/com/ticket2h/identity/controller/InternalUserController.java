@@ -19,8 +19,9 @@ import com.ticket2h.identity.exception.NotFoundException;
 import com.ticket2h.identity.service.AccountService;
 
 /**
- * API nội bộ cho service khác: notification-service lấy email người nhận, core-service tìm người nhận vé và
- * nhân viên soát vé theo email. Chỉ service có khoá {@code X-Internal-Api-Key} gọi được (SecurityConfig).
+ * API nội bộ cho service khác: notification-service lấy email người nhận; core-service tìm người nhận vé và
+ * nhân viên soát vé theo email, và lấy theo id để hiện danh sách nhân viên được phân công cho một sự kiện.
+ * Chỉ service có khoá {@code X-Internal-Api-Key} gọi được (SecurityConfig).
  * Hợp đồng: infra/docs/contracts.md.
  */
 @RestController

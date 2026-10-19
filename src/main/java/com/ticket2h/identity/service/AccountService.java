@@ -1,10 +1,14 @@
 package com.ticket2h.identity.service;
 
 import java.time.Clock;
+import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,6 +98,23 @@ public class AccountService {
         return organizers.saveAndFlush(new Organizer(id, name.trim(), clock.instant()));
     }
 
+    /** Mọi ban tổ chức, theo tên (không phân biệt hoa thường). Số ban tổ chức nhỏ nên không phân trang. */
+    @Transactional(readOnly = true)
+    public List<Organizer> listOrganizers() {
+        return organizers.findAllOrderByName();
+    }
+
+    /**
+     * Tìm tài khoản cho trang quản trị. {@code role} null: mọi vai trò. {@code query} (bỏ khoảng trắng hai đầu; trống
+     * thì bỏ qua): chuỗi con của email hoặc họ tên, không phân biệt hoa thường; {@code %} và {@code _} trong đó là
+     * ký tự thường, không phải ký tự đại diện. {@code page} đếm từ 0 (controller đã kiểm tra page, size).
+     */
+    @Transactional(readOnly = true)
+    public Page<User> searchUsers(Role role, String query, int page, int size) {
+        EnumSet<Role> roles = role == null ? EnumSet.allOf(Role.class) : EnumSet.of(role);
+        return users.search(roles, containsPattern(query), PageRequest.of(page, size));
+    }
+
     @Transactional(readOnly = true)
     public LoginResult login(String email, String password) {
         User user = users.findByEmail(Emails.normalize(email)).orElse(null);
@@ -133,6 +154,15 @@ public class AccountService {
     @Transactional(readOnly = true)
     public boolean emailExists(String email) {
         return users.existsByEmail(Emails.normalize(email));
+    }
+
+    /** Mẫu LIKE "chứa chuỗi". Escape {@code \ % _} bằng {@code \}, khớp {@code ESCAPE} trong UserRepository. */
+    private static String containsPattern(String query) {
+        if (query == null || query.isBlank()) {
+            return "%";
+        }
+        String escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return "%" + escaped + "%";
     }
 
     private static BusinessException invalidCredentials() {

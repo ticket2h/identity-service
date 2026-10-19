@@ -46,12 +46,20 @@ public class TestData {
     }
 
     public UUID userWithEmail(String email, Role role, UUID organizerId) {
+        return insertUser(email, "Người dùng " + email, role, organizerId);
+    }
+
+    /** Tài khoản với họ tên cho trước (test tìm theo tên). {@code created_at} là giờ hiện tại của {@code clock}. */
+    public UUID userNamed(String email, String fullName, Role role) {
+        return insertUser(email, fullName, role, null);
+    }
+
+    private UUID insertUser(String email, String fullName, Role role, UUID organizerId) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO users (id, email, password_hash, full_name, role, organizer_id, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, id, email, passwordHash(), "Người dùng " + email, role.name(), organizerId,
-                now());
+                """, id, email, passwordHash(), fullName, role.name(), organizerId, now());
         return id;
     }
 
