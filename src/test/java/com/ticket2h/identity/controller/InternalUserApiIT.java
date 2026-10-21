@@ -2,6 +2,7 @@ package com.ticket2h.identity.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -11,6 +12,8 @@ import com.ticket2h.identity.entity.Role;
 import com.ticket2h.identity.support.Api;
 import com.ticket2h.identity.support.IntegrationTest;
 import com.ticket2h.identity.support.TestData;
+
+import tools.jackson.databind.JsonNode;
 
 /** API nội bộ cho core-service và notification-service (infra/docs/contracts.md). */
 class InternalUserApiIT extends IntegrationTest {
@@ -100,5 +103,50 @@ class InternalUserApiIT extends IntegrationTest {
         assertThat(blank.status()).isEqualTo(400);
         assertThat(blank.code()).isEqualTo("VALIDATION_FAILED");
         assertThat(malformed.status()).isEqualTo(400);
+    }
+
+    @Test
+    void batch_returns_the_accounts_that_exist_and_skips_unknown_ids() {
+        UUID customer = testData.user();
+        TestData.OrganizerRef organizer = testData.organizer();
+        UUID unknown = UUID.randomUUID();
+
+        Api.Response response = api.post("/internal/users/batch", null,
+                Map.of("ids", List.of(customer, organizer.userId(), unknown, customer)), CORE);
+
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(response.header("Cache-Control")).contains("no-store");
+        JsonNode users = response.json().get("users");
+        assertThat(users).hasSize(2);
+        Map<String, JsonNode> byId = new java.util.HashMap<>();
+        users.forEach(u -> byId.put(u.get("id").asString(), u));
+        assertThat(byId.keySet()).containsExactlyInAnyOrder(customer.toString(), organizer.userId().toString());
+        assertThat(byId.get(customer.toString()).propertyNames())
+                .containsExactlyInAnyOrder("id", "email", "fullName", "role", "organizerId");
+        assertThat(byId.get(organizer.userId().toString()).get("organizerId").asString())
+                .isEqualTo(organizer.organizerId().toString());
+    }
+
+    @Test
+    void batch_accepts_up_to_1000_ids_and_rejects_empty_or_larger_requests() {
+        List<UUID> thousand = new java.util.ArrayList<>();
+        for (int i = 0; i < 1_000; i++) {
+            thousand.add(UUID.randomUUID());
+        }
+        thousand.set(500, testData.user());
+        List<UUID> tooMany = new java.util.ArrayList<>(thousand);
+        tooMany.add(UUID.randomUUID());
+
+        Api.Response ok = api.post("/internal/users/batch", null, Map.of("ids", thousand), CORE);
+        Api.Response empty = api.post("/internal/users/batch", null, Map.of("ids", List.of()), CORE);
+        Api.Response large = api.post("/internal/users/batch", null, Map.of("ids", tooMany), CORE);
+        Api.Response noKey = api.post("/internal/users/batch", null, Map.of("ids", List.of(thousand.get(500))));
+
+        assertThat(ok.status()).isEqualTo(200);
+        assertThat(ok.json().get("users")).hasSize(1);
+        assertThat(empty.status()).isEqualTo(400);
+        assertThat(large.status()).isEqualTo(400);
+        assertThat(large.code()).isEqualTo("VALIDATION_FAILED");
+        assertThat(noKey.status()).isEqualTo(401);
     }
 }

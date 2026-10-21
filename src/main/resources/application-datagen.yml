@@ -1,0 +1,5 @@
+# Công cụ sinh tài khoản (M4): ./mvnw spring-boot:run -Dspring-boot.run.profiles=datagen
+# Cỡ dữ liệu: ticket2h.datagen.* (DatagenProperties). Cả hệ thống: infra/scripts/datagen.sh.
+spring:
+  main:
+    web-application-type: none     # không mở cổng 8082, chạy xong thì tắt

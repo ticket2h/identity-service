@@ -21,10 +21,11 @@ API nội bộ): [infra/docs/contracts.md](https://github.com/ticket2h/infra/blo
 | POST | `/admin/organizers` | ADMIN | `{name}` → 201 `{id, name}` |
 | GET | `/admin/organizers` | ADMIN | Mảng `[{id, name}]`, theo tên không phân biệt hoa thường. Không phân trang |
 | POST | `/admin/users` | ADMIN | `{email, password, fullName, role, organizerId?}`; ORGANIZER cần `organizerId` có thật, vai trò khác không được có |
-| GET | `/admin/users?role=&q=&page=&size=` | ADMIN | `{items: [tài khoản], page, size, total}`, mới tạo trước (cùng lúc thì theo email). Chi tiết bên dưới |
+| GET | `/admin/users?role=&q=&limit=&cursor=` | ADMIN | `{items: [tài khoản], limit, nextCursor}`, mới tạo trước, phân trang keyset. Chi tiết bên dưới |
 | GET | `/v3/api-docs`, `/swagger-ui.html` | Mọi người | Mô tả API (OpenAPI 3, springdoc). Web sinh kiểu TypeScript từ đây |
 | GET | `/.well-known/jwks.json` | Mọi người (service khác) | Khoá công khai (JWKS), `Cache-Control: public, max-age=300` |
-| GET | `/internal/users/{userId}` | core-service, notification-service | Header `X-Internal-Api-Key`. Không có → 404. notification-service: email, tên người nhận; core-service: hiện nhân viên được phân công cho sự kiện |
+| GET | `/internal/users/{userId}` | notification-service | Header `X-Internal-Api-Key`. Không có → 404. Email, tên người nhận |
+| POST | `/internal/users/batch` | core-service | `{ids: [...]}` tối đa 1.000 id → `{users: [...]}`; id không có tài khoản thì không có trong kết quả (không 404). Nhân viên soát vé, người mua trong danh sách đơn và file danh sách khách |
 | POST | `/internal/users/lookup` | core-service | `{email}` (chuẩn hoá hoa thường, khoảng trắng). Không có → 404; email sai dạng → 400 |
 
 Tài khoản trả ra (công khai lẫn nội bộ) có đúng các trường `id, email, fullName, role, organizerId`
@@ -37,22 +38,26 @@ Người không phải ADMIN gọi `/admin/**` → 403 `FORBIDDEN`; không có t
 
 ### `GET /admin/users`
 
-Màn hình quản trị của web-app. Cùng dạng trang với `GET /events` của core-service (`page` đếm từ 0):
+Màn hình quản trị của web-app. Phân trang **keyset** (M4, ADR-018 ở core-service): với 2 triệu tài khoản, `OFFSET`
+ở trang sâu phải đọc rồi bỏ qua mọi dòng phía trước, keyset thì nhảy thẳng tới đúng chỗ trong index.
 
 ```json
 { "items": [ { "id": "uuid", "email": "staff1@test.local", "fullName": "Nhân viên 1",
                "role": "STAFF", "organizerId": null } ],
-  "page": 0, "size": 20, "total": 1 }
+  "limit": 20, "nextCursor": "MjAyNi0xMC0yMVQwNzozMDowMFp8..." }
 ```
 
 | Tham số | Mặc định | Ý nghĩa |
 |---|---|---|
 | `role` | (mọi vai trò) | `CUSTOMER`, `ORGANIZER`, `STAFF`, `ADMIN`, viết hoa đúng như vậy. Giá trị khác → 400 `VALIDATION_FAILED`; `role=` rỗng coi như không lọc |
-| `q` | (không lọc) | Bỏ khoảng trắng hai đầu, tìm chuỗi con trong email **hoặc** họ tên, không phân biệt hoa thường (cả chữ có dấu). `%`, `_` là ký tự thường |
-| `page` | `0` | Ngoài `0..10000` → 400 `VALIDATION_FAILED` |
-| `size` | `20` | Nhỏ hơn 1 → 400; lớn hơn 100 thì dùng 100 (như core giới hạn `size` của `/events`). `size` trong kết quả là số đã dùng |
+| `q` | (không lọc) | Bỏ khoảng trắng hai đầu, tìm chuỗi con trong email **hoặc** họ tên, không phân biệt hoa thường (cả chữ có dấu). `%`, `_` là ký tự thường. Từ 3 ký tự thì dùng index trigram (`pg_trgm`) |
+| `cursor` | (trang đầu) | `nextCursor` của trang trước, gửi lại nguyên văn. Chuỗi hỏng → 400 `VALIDATION_FAILED` |
+| `limit` | `20` | Nhỏ hơn 1 → 400; lớn hơn 100 thì dùng 100. `limit` trong kết quả là số đã dùng |
 
-`total` là tổng số tài khoản khớp bộ lọc trên mọi trang. Lọc và phân trang làm trong database (`UserRepository.search`).
+Sắp theo `created_at` giảm dần rồi `id` giảm dần (`id` phá hoà khi nhiều tài khoản tạo cùng một micro giây).
+`nextCursor` là `null` ở trang cuối. Không có tổng số tài khoản: đếm 2 triệu dòng ở mỗi trang tốn hơn chính việc lấy
+trang. Tài khoản tạo thêm trong lúc đang xem không làm trang sau bị lặp hay sót (OFFSET thì có). Câu SQL ở
+`UserSearchImpl` (phần tự viết của `UserRepository`), index ở `V3__m4_admin_user_list.sql`.
 `q` nằm trên URL nên có thể lọt vào access log của gateway: chấp nhận được vì chỉ ADMIN gọi và chỉ là đoạn tìm kiếm;
 tìm đúng một email (dữ liệu cá nhân) thì service khác vẫn dùng `POST /internal/users/lookup`.
 
@@ -98,16 +103,18 @@ src/main/java/com/ticket2h/identity/
 ├── IdentityServiceApplication.java
 ├── config/       IdentityProperties, JwtConfig (khoá RSA, JWKS, encoder/decoder), SecurityConfig, PasswordConfig, ClockConfig
 ├── controller/   AuthController, AdminController, InternalUserController, JwksController
-├── dto/request/  RegisterRequest, LoginRequest, CreateUserRequest, CreateOrganizerRequest, UserLookupRequest
-├── dto/response/ UserResponse, UserPageResponse, LoginResponse, OrganizerResponse
+├── dto/request/  RegisterRequest, LoginRequest, CreateUserRequest, CreateOrganizerRequest, UserLookupRequest,
+│                 UserBatchRequest
+├── dto/response/ UserResponse, UserPageResponse, UserBatchResponse, LoginResponse, OrganizerResponse
 ├── entity/       User, Organizer, Role, AssignedIdEntity
-├── repository/   UserRepository, OrganizerRepository, Constraints
-├── service/      AccountService (đăng ký, đăng nhập, tạo tài khoản), TokenService (phát JWT), Emails
+├── repository/   UserRepository (+ UserSearch/UserSearchImpl: danh sách keyset), OrganizerRepository, Constraints
+├── service/      AccountService (đăng ký, đăng nhập, tạo tài khoản), TokenService (phát JWT), Emails, UserCursor
 ├── security/     InternalApiKeyFilter, AuthUser, AuthUserArgumentResolver, JwtClaims
 ├── exception/    ErrorCode, BusinessException..., ProblemDetails, ApiExceptionHandler
-└── dev/          DevAccounts (id cố định), DevDataSeeder (profile dev)
+└── dev/          DevAccounts (id cố định), DevDataSeeder (profile dev), DataGenerator + DatagenIds (profile datagen)
 src/main/resources/db/migration/V1__identity.sql   organizers, users
 src/main/resources/db/migration/V2__refresh_tokens.sql   refresh_tokens
+src/main/resources/db/migration/V3__m4_admin_user_list.sql   index keyset (created_at, id) và trigram cho tìm kiếm
 ```
 
 ## Chạy
@@ -149,10 +156,24 @@ Id cố định, vì core-service tạo sự kiện mẫu cho đúng ban tổ ch
 | `staff1@test.local` | STAFF | `0b000000-0000-4000-8000-000000000003` |
 | `buyer1..3@test.local` | CUSTOMER | `0b000000-0000-4000-8000-000000000004` … `…006` |
 
+### Dữ liệu lớn (M4, profile datagen)
+
+`DataGenerator` sinh 200 ban tổ chức (kèm tài khoản `btc{i}@datagen.ticket2h.local`), 600 nhân viên soát vé
+(`soatve{i}@…`) và 2 triệu khách (`khach{i}@…`) đăng ký dần trong 2 năm, cùng mật khẩu `Passw0rd!` (chung một hash
+BCrypt: băm 2 triệu lần mất hàng giờ). Nạp bằng `COPY` trong một transaction, khoảng 40 giây. Id theo `DatagenIds`,
+hợp đồng với công cụ sinh của core-service ([infra/docs/contracts.md](https://github.com/ticket2h/infra/blob/main/docs/contracts.md), mục 6). Cả hệ
+thống: `../infra/scripts/datagen.sh`. Chạy riêng:
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev,datagen -Dspring-boot.run.arguments=--ticket2h.datagen.customers=200000
+```
+
+Chạy xong thì app tự tắt; database đã có tài khoản sinh thì không sinh chồng.
+
 ## Test
 
 ```bash
-./mvnw verify      # 4 unit test + 40 integration test
+./mvnw verify      # 5 unit test + 45 integration test
 ```
 
 Test chạy PostgreSQL thật (Testcontainers, cần Docker). Khoá RSA sinh lúc chạy test, không commit khoá nào.

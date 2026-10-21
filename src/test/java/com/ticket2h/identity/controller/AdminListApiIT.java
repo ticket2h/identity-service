@@ -62,10 +62,9 @@ class AdminListApiIT extends IntegrationTest {
         Api.Response response = api.get("/admin/users", admin);
 
         assertThat(response.status()).isEqualTo(200);
-        assertThat(response.json().propertyNames()).containsExactlyInAnyOrder("items", "page", "size", "total");
-        assertThat(response.json().get("page").asInt()).isZero();
-        assertThat(response.json().get("size").asInt()).isEqualTo(20);
-        assertThat(response.json().get("total").asLong()).isEqualTo(3);
+        assertThat(response.json().propertyNames()).containsExactlyInAnyOrder("items", "limit", "nextCursor");
+        assertThat(response.json().get("limit").asInt()).isEqualTo(20);
+        assertThat(response.json().get("nextCursor").isNull()).isTrue();
         assertThat(emails(response)).containsExactly(organizer.email(), "first@test.local", ADMIN_EMAIL);
         JsonNode newest = response.json().get("items").get(0);
         assertThat(newest.propertyNames())
@@ -87,12 +86,11 @@ class AdminListApiIT extends IntegrationTest {
         Api.Response emptyRole = api.get("/admin/users?role=", admin);
 
         assertThat(staff.status()).isEqualTo(200);
-        assertThat(emails(staff)).containsExactly("staff1@test.local", "staff2@test.local");
-        assertThat(staff.json().get("total").asLong()).isEqualTo(2);
+        assertThat(emails(staff)).containsExactlyInAnyOrder("staff1@test.local", "staff2@test.local");
         assertThat(emails(admins)).containsExactly(ADMIN_EMAIL);
-        assertThat(organizers.json().get("total").asLong()).isZero();
         assertThat(organizers.json().get("items").size()).isZero();
-        assertThat(emptyRole.json().get("total").asLong()).isEqualTo(4);
+        assertThat(organizers.json().get("nextCursor").isNull()).isTrue();
+        assertThat(emails(emptyRole)).hasSize(4);
     }
 
     @Test
@@ -107,57 +105,77 @@ class AdminListApiIT extends IntegrationTest {
         assertThat(emails(api.get("/admin/users?q=TRẦN", admin))).containsExactly("binh@test.local");
         assertThat(emails(api.get("/admin/users?q=lê cƯỜng", admin))).containsExactly("cuong@test.local");
         // "an" có trong email nguyen.an@ và trong tên "Nguyễn Văn An", chỉ tính một lần
-        Api.Response an = api.get("/admin/users?q=an&role=CUSTOMER", admin);
-        assertThat(emails(an)).containsExactly("nguyen.an@test.local");
-        assertThat(an.json().get("total").asLong()).isEqualTo(1);
+        assertThat(emails(api.get("/admin/users?q=an&role=CUSTOMER", admin))).containsExactly("nguyen.an@test.local");
         // Kết hợp với role: Bình là STAFF
-        assertThat(api.get("/admin/users?q=bình&role=CUSTOMER", admin).json().get("total").asLong()).isZero();
+        assertThat(emails(api.get("/admin/users?q=bình&role=CUSTOMER", admin))).isEmpty();
         // "_" là ký tự thường, không phải ký tự đại diện của LIKE
-        assertThat(api.get("/admin/users?q=_", admin).json().get("total").asLong()).isZero();
+        assertThat(emails(api.get("/admin/users?q=_", admin))).isEmpty();
         // q chỉ có khoảng trắng: không lọc
-        assertThat(api.get("/admin/users?q=   ", admin).json().get("total").asLong()).isEqualTo(4);
+        assertThat(emails(api.get("/admin/users?q=   ", admin))).hasSize(4);
     }
 
+    /** Đi hết danh sách theo nextCursor: không lặp, không sót, kể cả các tài khoản tạo cùng một thời điểm. */
     @Test
-    void pages_are_disjoint_and_report_the_total() {
+    void following_next_cursor_walks_every_user_once_newest_first() {
         for (int i = 1; i <= 4; i++) {
             clock.advance(Duration.ofMinutes(1));
             testData.userWithEmail("u" + i + "@test.local", Role.CUSTOMER, null);
         }
         clock.advance(Duration.ofMinutes(1));
-        // Tạo cùng lúc thì theo email
-        testData.userWithEmail("same-b@test.local", Role.CUSTOMER, null);
-        testData.userWithEmail("same-a@test.local", Role.CUSTOMER, null);
-
-        Api.Response first = api.get("/admin/users?size=3", admin);
-        Api.Response second = api.get("/admin/users?page=1&size=3", admin);
-        Api.Response third = api.get("/admin/users?page=2&size=3", admin);
-        Api.Response beyond = api.get("/admin/users?page=3&size=3", admin);
-
-        assertThat(emails(first)).containsExactly("same-a@test.local", "same-b@test.local", "u4@test.local");
-        assertThat(emails(second)).containsExactly("u3@test.local", "u2@test.local", "u1@test.local");
-        assertThat(emails(third)).containsExactly(ADMIN_EMAIL);
-        assertThat(emails(beyond)).isEmpty();
-        for (Api.Response page : List.of(first, second, third, beyond)) {
-            assertThat(page.json().get("total").asLong()).isEqualTo(7);
-            assertThat(page.json().get("size").asInt()).isEqualTo(3);
+        for (int i = 1; i <= 5; i++) {
+            testData.userWithEmail("same" + i + "@test.local", Role.CUSTOMER, null);   // cùng created_at
         }
-        assertThat(second.json().get("page").asInt()).isEqualTo(1);
-        assertThat(beyond.json().get("page").asInt()).isEqualTo(3);
+
+        List<String> walked = new ArrayList<>();
+        String cursor = null;
+        int pages = 0;
+        do {
+            Api.Response page = api.get("/admin/users?limit=3" + (cursor == null ? "" : "&cursor=" + cursor), admin);
+            assertThat(page.status()).isEqualTo(200);
+            assertThat(page.json().get("limit").asInt()).isEqualTo(3);
+            walked.addAll(emails(page));
+            cursor = page.json().get("nextCursor").isNull() ? null : page.json().get("nextCursor").asString();
+            pages++;
+        } while (cursor != null);
+
+        assertThat(pages).isEqualTo(4);   // 10 tài khoản, 3 mỗi trang
+        assertThat(walked).doesNotHaveDuplicates().hasSize(10);
+        assertThat(walked.subList(0, 5)).allMatch(email -> email.startsWith("same"));
+        assertThat(walked.subList(5, 10))
+                .containsExactly("u4@test.local", "u3@test.local", "u2@test.local", "u1@test.local", ADMIN_EMAIL);
     }
 
     @Test
-    void size_above_100_is_capped() {
-        Api.Response response = api.get("/admin/users?size=1000", admin);
+    void cursor_keeps_its_place_when_newer_users_are_created_meanwhile() {
+        for (int i = 1; i <= 4; i++) {
+            clock.advance(Duration.ofMinutes(1));
+            testData.userWithEmail("u" + i + "@test.local", Role.CUSTOMER, null);
+        }
+        Api.Response first = api.get("/admin/users?limit=2", admin);
+        clock.advance(Duration.ofMinutes(1));
+        testData.userWithEmail("newcomer@test.local", Role.CUSTOMER, null);
+
+        Api.Response second = api.get("/admin/users?limit=2&cursor=" + first.json().get("nextCursor").asString(),
+                admin);
+
+        // Với OFFSET, người mới đẩy u3 sang trang 2 và u3 bị hiện hai lần
+        assertThat(emails(first)).containsExactly("u4@test.local", "u3@test.local");
+        assertThat(emails(second)).containsExactly("u2@test.local", "u1@test.local");
+    }
+
+    @Test
+    void limit_above_100_is_capped() {
+        Api.Response response = api.get("/admin/users?limit=1000", admin);
 
         assertThat(response.status()).isEqualTo(200);
-        assertThat(response.json().get("size").asInt()).isEqualTo(100);
+        assertThat(response.json().get("limit").asInt()).isEqualTo(100);
     }
 
     @Test
-    void invalid_role_page_or_size_is_400() {
-        for (String query : List.of("role=SUPERUSER", "role=staff", "page=-1", "page=10001", "page=abc", "size=0",
-                "size=-5")) {
+    void invalid_role_limit_or_cursor_is_400() {
+        String notACursor = java.util.Base64.getUrlEncoder().encodeToString("hello".getBytes());
+        for (String query : List.of("role=SUPERUSER", "role=staff", "limit=0", "limit=-5", "limit=abc",
+                "cursor=%25%25%25", "cursor=" + notACursor)) {
             Api.Response response = api.get("/admin/users?" + query, admin);
 
             assertThat(response.status()).as(query).isEqualTo(400);

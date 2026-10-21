@@ -60,9 +60,9 @@
 			<version>3.1.1</version>
 		</dependency>
 		<dependency>
+			<!-- compile (không phải runtime): công cụ sinh dữ liệu M4 gọi COPY qua API riêng của driver (PGConnection) -->
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 
 		<dependency>

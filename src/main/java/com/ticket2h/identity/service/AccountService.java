@@ -1,14 +1,13 @@
 package com.ticket2h.identity.service;
 
 import java.time.Clock;
-import java.util.EnumSet;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -105,14 +104,23 @@ public class AccountService {
     }
 
     /**
-     * Tìm tài khoản cho trang quản trị. {@code role} null: mọi vai trò. {@code query} (bỏ khoảng trắng hai đầu; trống
-     * thì bỏ qua): chuỗi con của email hoặc họ tên, không phân biệt hoa thường; {@code %} và {@code _} trong đó là
-     * ký tự thường, không phải ký tự đại diện. {@code page} đếm từ 0 (controller đã kiểm tra page, size).
+     * Một trang tài khoản cho trang quản trị, mới tạo trước, phân trang keyset. {@code role} null: mọi vai trò.
+     * {@code query} (bỏ khoảng trắng hai đầu; trống thì bỏ qua): chuỗi con của email hoặc họ tên, không phân biệt hoa
+     * thường; {@code %} và {@code _} trong đó là ký tự thường, không phải ký tự đại diện. {@code cursor} null: trang
+     * đầu; còn lại là {@code nextCursor} của trang trước. {@code nextCursor} của kết quả là null khi hết danh sách.
      */
     @Transactional(readOnly = true)
-    public Page<User> searchUsers(Role role, String query, int page, int size) {
-        EnumSet<Role> roles = role == null ? EnumSet.allOf(Role.class) : EnumSet.of(role);
-        return users.search(roles, containsPattern(query), PageRequest.of(page, size));
+    public UserSlice searchUsers(Role role, String query, String cursor, int limit) {
+        UserCursor after = cursor == null || cursor.isBlank() ? null : UserCursor.decode(cursor);
+        // Lấy thừa một dòng để biết còn trang sau hay không, khỏi phải đếm tổng
+        List<User> found = users.searchPage(role, containsPattern(query), after == null ? null : after.createdAt(),
+                after == null ? null : after.id(), limit + 1);
+        if (found.size() <= limit) {
+            return new UserSlice(found, null);
+        }
+        List<User> page = found.subList(0, limit);
+        User last = page.getLast();
+        return new UserSlice(List.copyOf(page), new UserCursor(last.getCreatedAt(), last.getId()).encode());
     }
 
     @Transactional(readOnly = true)
@@ -142,6 +150,12 @@ public class AccountService {
     }
 
     /** Tìm theo email đã chuẩn hoá. Email sai dạng thì 400, để phân biệt với "không có tài khoản" (404). */
+    /** Một câu {@code WHERE id IN (...)}; id trùng nhau trả một lần, id không có thì bỏ qua. */
+    @Transactional(readOnly = true)
+    public List<User> findAll(Collection<UUID> userIds) {
+        return users.findAllById(new LinkedHashSet<>(userIds));
+    }
+
     @Transactional(readOnly = true)
     public Optional<User> findByEmail(String email) {
         String normalized = Emails.normalize(email);
@@ -159,7 +173,7 @@ public class AccountService {
     /** Mẫu LIKE "chứa chuỗi". Escape {@code \ % _} bằng {@code \}, khớp {@code ESCAPE} trong UserRepository. */
     private static String containsPattern(String query) {
         if (query == null || query.isBlank()) {
-            return "%";
+            return null;
         }
         String escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
         return "%" + escaped + "%";
@@ -174,4 +188,7 @@ public class AccountService {
     }
 
     public record LoginResult(String accessToken, long expiresInSeconds, User user) {}
+
+    /** {@code nextCursor} null: đây là trang cuối. */
+    public record UserSlice(List<User> users, String nextCursor) {}
 }

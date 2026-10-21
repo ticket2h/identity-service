@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import com.ticket2h.identity.entity.Role;
@@ -19,6 +20,7 @@ import com.ticket2h.identity.service.AccountService;
  */
 @Component
 @Profile("dev")
+@Order(1)   // trước công cụ sinh tài khoản (profile datagen) nếu bật cả hai
 class DevDataSeeder implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DevDataSeeder.class);

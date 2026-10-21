@@ -7,6 +7,7 @@ và hợp đồng giữa các service: `../infra/docs/`.
 ## Lệnh
 - Build và chạy toàn bộ test: `./mvnw verify` (cần Docker cho Testcontainers)
 - Chạy với tài khoản mẫu: `./mvnw spring-boot:run -Dspring-boot.run.profiles=dev` (cổng 8082; cần `../infra` đang chạy)
+- Sinh 2 triệu tài khoản (M4): profile `dev,datagen` (README, mục "Dữ liệu lớn"), hoặc `../infra/scripts/datagen.sh`
 
 ## Quy ước bắt buộc
 - Không log mật khẩu, hash mật khẩu, access token, khoá riêng JWT, header `Authorization` hay `X-Internal-Api-Key`.
@@ -14,7 +15,11 @@ và hợp đồng giữa các service: `../infra/docs/`.
 - Không trả entity `User` ra API: luôn đổi sang `UserResponse` (không có `passwordHash`).
 - Claim trong JWT (`iss`, `sub`, `role`, `organizerId`), thuật toán RS256, `kid`, đường dẫn JWKS và API `/internal/**`
   là hợp đồng với service khác (`../infra/docs/contracts.md`): đổi thì sửa tài liệu và các service dùng nó cùng lúc.
-- Id trong `dev/DevAccounts` được core-service dùng cho dữ liệu mẫu: không đổi nếu chưa sửa bên core.
+- Id trong `dev/DevAccounts` được core-service dùng cho dữ liệu mẫu: không đổi nếu chưa sửa bên core. Công thức trong
+  `dev/DatagenIds` (dữ liệu sinh, profile `datagen`) cũng vậy: `DatagenIdsTest` giữ cùng giá trị với core.
+- Danh sách có thể dài (tài khoản): phân trang keyset theo `(created_at, id)` như `UserSearchImpl`, không OFFSET,
+  không đếm tổng mỗi trang. Câu SQL ghép từ đoạn viết sẵn, giá trị người dùng chỉ đi qua tham số.
+- `SecurityConfig` chỉ bật khi app chạy web (`@ConditionalOnWebApplication`): profile `datagen` chạy không có web.
 - Email chuẩn hoá (`Emails.normalize`) trước khi lưu và trước khi tìm.
 - Thời gian: inject `Clock`.
 - Exception nghiệp vụ kế thừa `BusinessException`, có `ErrorCode`. Lỗi API là ProblemDetail có trường `code`.
