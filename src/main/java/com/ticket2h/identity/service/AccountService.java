@@ -149,13 +149,13 @@ public class AccountService {
         return users.findById(userId);
     }
 
-    /** Tìm theo email đã chuẩn hoá. Email sai dạng thì 400, để phân biệt với "không có tài khoản" (404). */
     /** Một câu {@code WHERE id IN (...)}; id trùng nhau trả một lần, id không có thì bỏ qua. */
     @Transactional(readOnly = true)
     public List<User> findAll(Collection<UUID> userIds) {
         return users.findAllById(new LinkedHashSet<>(userIds));
     }
 
+    /** Tìm theo email đã chuẩn hoá. Email sai dạng thì 400, để phân biệt với "không có tài khoản" (404). */
     @Transactional(readOnly = true)
     public Optional<User> findByEmail(String email) {
         String normalized = Emails.normalize(email);
