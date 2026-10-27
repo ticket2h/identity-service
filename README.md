@@ -75,7 +75,23 @@ Web giữ access token trong bộ nhớ, hết hạn thì gọi `/auth/refresh`.
 - Gọi qua gateway (nginx của repo web-app), cookie đi ở `/api/identity/auth`: gateway đổi `Path` bằng `proxy_cookie_path`,
   service không cần biết. Gọi thẳng cổng 8082 thì giữ `/auth`.
 - `SameSite=Strict` chặn trang khác gửi kèm cookie, nên CSRF vẫn tắt.
-- Chưa có job dọn token hết hạn (bảng chỉ lớn dần theo số lần đăng nhập/refresh): làm cùng rate limit ở M5.
+- Chưa có job dọn token hết hạn (bảng chỉ lớn dần theo số lần đăng nhập/refresh).
+- Giới hạn số lần đăng nhập, đăng ký (đoán mật khẩu, tạo tài khoản hàng loạt): ở gateway (nginx của web-app), 10 lần
+  mỗi phút mỗi IP, ADR-026 trong infra. Service này không có Redis.
+
+## Lịch sử thao tác (M6)
+
+Bảng `audit_logs` (V4, ADR-023 trong infra), chỉ ghi thêm (trigger chặn UPDATE, DELETE), ghi trong cùng transaction
+với thay đổi:
+
+| Thao tác | Ai | `details` |
+|---|---|---|
+| `ORGANIZER_CREATED` | admin | `name` |
+| `USER_CREATED` | admin (tạo tài khoản ban tổ chức, nhân viên, admin) | `role`, `organizerId`; không có mật khẩu |
+| `REFRESH_TOKEN_REUSE_DETECTED` | hệ thống (`refresh-token`) | `familyId`, `revokedTokens`; không có token |
+
+Khách tự đăng ký không ghi. `GET /admin/audit-logs?action=&cursor=&limit=` (ADMIN): mới nhất trước, phân trang keyset
+`(occurred_at, id)`, kèm email của người làm và của tài khoản bị tác động (tra lúc đọc, không lưu trong `details`).
 
 | Cấu hình | Mặc định | Ý nghĩa |
 |---|---|---|
@@ -102,19 +118,23 @@ Service nhỏ, nên package chia theo **tầng kỹ thuật**:
 src/main/java/com/ticket2h/identity/
 ├── IdentityServiceApplication.java
 ├── config/       IdentityProperties, JwtConfig (khoá RSA, JWKS, encoder/decoder), SecurityConfig, PasswordConfig, ClockConfig
-├── controller/   AuthController, AdminController, InternalUserController, JwksController
+├── controller/   AuthController, AdminController (cả lịch sử thao tác), InternalUserController, JwksController
 ├── dto/request/  RegisterRequest, LoginRequest, CreateUserRequest, CreateOrganizerRequest, UserLookupRequest,
 │                 UserBatchRequest
-├── dto/response/ UserResponse, UserPageResponse, UserBatchResponse, LoginResponse, OrganizerResponse
+├── dto/response/ UserResponse, UserPageResponse, UserBatchResponse, LoginResponse, OrganizerResponse,
+│                 AuditLogPageResponse
 ├── entity/       User, Organizer, Role, AssignedIdEntity
-├── repository/   UserRepository (+ UserSearch/UserSearchImpl: danh sách keyset), OrganizerRepository, Constraints
-├── service/      AccountService (đăng ký, đăng nhập, tạo tài khoản), TokenService (phát JWT), Emails, UserCursor
+├── repository/   UserRepository (+ UserSearch/UserSearchImpl: danh sách keyset), OrganizerRepository,
+│                 AuditLogRepository, Constraints
+├── service/      AccountService (đăng ký, đăng nhập, tạo tài khoản), TokenService (phát JWT), Emails,
+│                 KeysetCursor, AuditLog (+ AuditAction, AuditActor)
 ├── security/     InternalApiKeyFilter, AuthUser, AuthUserArgumentResolver, JwtClaims
 ├── exception/    ErrorCode, BusinessException..., ProblemDetails, ApiExceptionHandler
 └── dev/          DevAccounts (id cố định), DevDataSeeder (profile dev), DataGenerator + DatagenIds (profile datagen)
 src/main/resources/db/migration/V1__identity.sql   organizers, users
 src/main/resources/db/migration/V2__refresh_tokens.sql   refresh_tokens
 src/main/resources/db/migration/V3__m4_admin_user_list.sql   index keyset (created_at, id) và trigram cho tìm kiếm
+src/main/resources/db/migration/V4__m6_audit_logs.sql   audit_logs (chỉ ghi thêm)
 ```
 
 ## Chạy

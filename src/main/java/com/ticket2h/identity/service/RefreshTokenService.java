@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -28,17 +29,20 @@ import com.ticket2h.identity.repository.UserRepository;
 public class RefreshTokenService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final AuditActor ACTOR = AuditActor.system("refresh-token");
 
     private final RefreshTokenRepository tokens;
     private final UserRepository users;
     private final IdentityProperties properties;
+    private final AuditLog audit;
     private final Clock clock;
 
     RefreshTokenService(RefreshTokenRepository tokens, UserRepository users, IdentityProperties properties,
-            Clock clock) {
+            AuditLog audit, Clock clock) {
         this.tokens = tokens;
         this.users = users;
         this.properties = properties;
+        this.audit = audit;
         this.clock = clock;
     }
 
@@ -61,7 +65,10 @@ public class RefreshTokenService {
         RefreshToken current = found.get();
         Instant now = clock.instant();
         if (current.isRevoked()) {
-            tokens.revokeFamily(current.getFamilyId(), now);
+            int revoked = tokens.revokeFamily(current.getFamilyId(), now);
+            // Sự kiện bảo mật: có người giữ bản sao của token. Ghi lịch sử (ADR-023), không ghi token.
+            audit.record(ACTOR, AuditAction.REFRESH_TOKEN_REUSE_DETECTED, current.getUserId(),
+                    Map.of("familyId", current.getFamilyId(), "revokedTokens", revoked));
             return Optional.empty();
         }
         current.revoke(now);

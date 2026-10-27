@@ -2,8 +2,10 @@ package com.ticket2h.identity.service;
 
 import java.time.Clock;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -30,17 +32,19 @@ public class AccountService {
     private final OrganizerRepository organizers;
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokens;
+    private final AuditLog audit;
     private final Clock clock;
 
     /** So khớp với hash giả khi email không tồn tại, để thời gian trả lời không lộ email nào đã đăng ký. */
     private final String dummyHash;
 
     AccountService(UserRepository users, OrganizerRepository organizers, PasswordEncoder passwordEncoder,
-            TokenService tokens, Clock clock) {
+            TokenService tokens, AuditLog audit, Clock clock) {
         this.users = users;
         this.organizers = organizers;
         this.passwordEncoder = passwordEncoder;
         this.tokens = tokens;
+        this.audit = audit;
         this.clock = clock;
         this.dummyHash = passwordEncoder.encode("not-a-real-password");
     }
@@ -51,10 +55,15 @@ public class AccountService {
         return createUser(UUID.randomUUID(), email, password, fullName, Role.CUSTOMER, null);
     }
 
-    /** Admin tạo tài khoản với vai trò bất kỳ. ORGANIZER phải gắn với một ban tổ chức. */
+    /** Admin tạo tài khoản với vai trò bất kỳ. ORGANIZER phải gắn với một ban tổ chức. Ghi lịch sử (ADR-023). */
     @Transactional
     public User createUser(String email, String password, String fullName, Role role, UUID organizerId) {
-        return createUser(UUID.randomUUID(), email, password, fullName, role, organizerId);
+        User user = createUser(UUID.randomUUID(), email, password, fullName, role, organizerId);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("role", role.name());
+        details.put("organizerId", organizerId);
+        audit.record(AuditAction.USER_CREATED, user.getId(), details);
+        return user;
     }
 
     /** Như trên nhưng tự chọn id. Dùng cho dữ liệu mẫu có id cố định (DevAccounts). */
@@ -86,9 +95,12 @@ public class AccountService {
         }
     }
 
+    /** Admin tạo ban tổ chức. Ghi lịch sử (ADR-023). */
     @Transactional
     public Organizer createOrganizer(String name) {
-        return createOrganizer(UUID.randomUUID(), name);
+        Organizer organizer = createOrganizer(UUID.randomUUID(), name);
+        audit.record(AuditAction.ORGANIZER_CREATED, organizer.getId(), Map.of("name", organizer.getName()));
+        return organizer;
     }
 
     /** Như trên nhưng tự chọn id. Dùng cho dữ liệu mẫu có id cố định (DevAccounts). */
@@ -111,16 +123,16 @@ public class AccountService {
      */
     @Transactional(readOnly = true)
     public UserSlice searchUsers(Role role, String query, String cursor, int limit) {
-        UserCursor after = cursor == null || cursor.isBlank() ? null : UserCursor.decode(cursor);
+        KeysetCursor after = cursor == null || cursor.isBlank() ? null : KeysetCursor.decode(cursor);
         // Lấy thừa một dòng để biết còn trang sau hay không, khỏi phải đếm tổng
-        List<User> found = users.searchPage(role, containsPattern(query), after == null ? null : after.createdAt(),
+        List<User> found = users.searchPage(role, containsPattern(query), after == null ? null : after.at(),
                 after == null ? null : after.id(), limit + 1);
         if (found.size() <= limit) {
             return new UserSlice(found, null);
         }
         List<User> page = found.subList(0, limit);
         User last = page.getLast();
-        return new UserSlice(List.copyOf(page), new UserCursor(last.getCreatedAt(), last.getId()).encode());
+        return new UserSlice(List.copyOf(page), new KeysetCursor(last.getCreatedAt(), last.getId()).encode());
     }
 
     @Transactional(readOnly = true)

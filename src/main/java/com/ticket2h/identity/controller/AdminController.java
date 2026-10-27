@@ -16,11 +16,15 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ticket2h.identity.dto.request.CreateOrganizerRequest;
 import com.ticket2h.identity.dto.request.CreateUserRequest;
+import com.ticket2h.identity.dto.response.AuditLogPageResponse;
 import com.ticket2h.identity.dto.response.OrganizerResponse;
 import com.ticket2h.identity.dto.response.UserPageResponse;
 import com.ticket2h.identity.dto.response.UserResponse;
 import com.ticket2h.identity.entity.Role;
 import com.ticket2h.identity.service.AccountService;
+import com.ticket2h.identity.service.AuditAction;
+import com.ticket2h.identity.service.AuditLog;
+import com.ticket2h.identity.service.AuditLog.AuditSlice;
 import com.ticket2h.identity.service.AccountService.UserSlice;
 
 /** Chỉ ADMIN (chặn trong SecurityConfig theo đường dẫn /admin/**). */
@@ -32,9 +36,11 @@ class AdminController {
     static final int MAX_PAGE_SIZE = 100;
 
     private final AccountService accounts;
+    private final AuditLog audit;
 
-    AdminController(AccountService accounts) {
+    AdminController(AccountService accounts, AuditLog audit) {
         this.accounts = accounts;
+        this.audit = audit;
     }
 
     @PostMapping("/organizers")
@@ -70,6 +76,20 @@ class AdminController {
         int safeLimit = Math.min(limit, MAX_PAGE_SIZE);
         UserSlice slice = accounts.searchUsers(role, q, cursor, safeLimit);
         return new UserPageResponse(slice.users().stream().map(UserResponse::of).toList(), safeLimit,
+                slice.nextCursor());
+    }
+
+    /**
+     * Lịch sử thao tác của identity (tạo ban tổ chức, tạo tài khoản, refresh token bị dùng lại), mới nhất trước, phân
+     * trang keyset như {@code /admin/users}. Lịch sử của phần bán vé nằm ở core-service
+     * ({@code GET /admin/audit-logs}).
+     */
+    @GetMapping("/audit-logs")
+    AuditLogPageResponse auditLogs(@RequestParam(required = false) AuditAction action,
+            @RequestParam(required = false) String cursor, @RequestParam(defaultValue = "50") @Min(1) int limit) {
+        int safeLimit = Math.min(limit, MAX_PAGE_SIZE);
+        AuditSlice slice = audit.page(action, cursor, safeLimit);
+        return new AuditLogPageResponse(slice.rows().stream().map(AuditLogPageResponse.Item::of).toList(), safeLimit,
                 slice.nextCursor());
     }
 }

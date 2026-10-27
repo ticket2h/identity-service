@@ -20,6 +20,9 @@ và hợp đồng giữa các service: `../infra/docs/`.
 - Danh sách có thể dài (tài khoản): phân trang keyset theo `(created_at, id)` như `UserSearchImpl`, không OFFSET,
   không đếm tổng mỗi trang. Câu SQL ghép từ đoạn viết sẵn, giá trị người dùng chỉ đi qua tham số.
 - `SecurityConfig` chỉ bật khi app chạy web (`@ConditionalOnWebApplication`): profile `datagen` chạy không có web.
+- Thao tác nhạy cảm mới của admin (tạo, khoá tài khoản, đổi quyền) và sự kiện bảo mật: gọi `AuditLog.record` trong
+  cùng transaction (ADR-023 ở `../infra/docs/adr/`), thêm hằng vào `AuditAction`. `details` không chứa email, mật
+  khẩu, token.
 - Email chuẩn hoá (`Emails.normalize`) trước khi lưu và trước khi tìm.
 - Thời gian: inject `Clock`.
 - Exception nghiệp vụ kế thừa `BusinessException`, có `ErrorCode`. Lỗi API là ProblemDetail có trường `code`.
